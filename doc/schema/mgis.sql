@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS t_mgis_qual_line (
 CREATE TABLE IF NOT EXISTS t_mgis_scope_card (
   id bigint NOT NULL COMMENT '主键',
   bill_no varchar(64) DEFAULT NULL COMMENT '作业范围标签卡号',
+  bill_date date DEFAULT NULL COMMENT '业务日期（不得早于昨日）',
   site_id int DEFAULT NULL COMMENT '所属资质单位基础档案',
   site_no varchar(64) DEFAULT NULL COMMENT '资质单位编号',
   qty decimal(12,2) DEFAULT NULL COMMENT '本卡挂用专业类别总数(项)',
@@ -68,7 +69,8 @@ CREATE TABLE IF NOT EXISTS t_mgis_scope_card (
   update_by varchar(64) DEFAULT NULL COMMENT '更新者',
   update_time datetime DEFAULT NULL COMMENT '更新时间',
   remark varchar(500) DEFAULT NULL COMMENT '备注',
-  PRIMARY KEY (id)
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_scope_card_bill_no (bill_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='作业范围标签建档卡';
 
 CREATE TABLE IF NOT EXISTS t_mgis_submit_row (

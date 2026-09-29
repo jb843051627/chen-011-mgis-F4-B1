@@ -45,6 +45,10 @@ public class MgisCheckCardController extends BaseController {
     @ResponseBody
     public ResultTable list(TMgisCheckCard record) {
         QueryWrapper<TMgisCheckCard> queryWrapper = new QueryWrapper<TMgisCheckCard>();
+        queryWrapper.like(com.fc.v2.util.StringUtils.isNotEmpty(record.getBizNo()),
+                "biz_no", record.getBizNo());
+        queryWrapper.eq(record.getStage() != null, "stage", record.getStage());
+        queryWrapper.eq(record.getStatus() != null, "status", record.getStatus());
         startPage();
         com.github.pagehelper.PageInfo<TMgisCheckCard> page =
                 new com.github.pagehelper.PageInfo<TMgisCheckCard>(mgisCheckCardService.selectTMgisCheckCardList(queryWrapper));

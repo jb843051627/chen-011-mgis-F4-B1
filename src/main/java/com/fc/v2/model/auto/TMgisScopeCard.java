@@ -37,6 +37,12 @@ public class TMgisScopeCard implements Serializable {
     @ApiModelProperty(value = "作业范围标签卡号")
     private String billNo;
 
+    /** 业务日期（不得早于昨日） */
+    @TableField("bill_date")
+    @JsonFormat(pattern = "yyyy-MM-dd", timezone = "GMT+8")
+    @ApiModelProperty(value = "业务日期（不得早于昨日）")
+    private Date billDate;
+
     /** 所属资质单位基础档案 */
     @TableField("site_id")
     @ApiModelProperty(value = "所属资质单位基础档案")
@@ -113,6 +119,14 @@ public class TMgisScopeCard implements Serializable {
 
     public void setBillNo(String billNo) {
         this.billNo = billNo;
+    }
+
+    public Date getBillDate() {
+        return billDate;
+    }
+
+    public void setBillDate(Date billDate) {
+        this.billDate = billDate;
     }
 
     public Integer getSiteId() {

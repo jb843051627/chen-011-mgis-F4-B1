@@ -1,7 +1,6 @@
 package com.fc.v2.service.impl;
 
 import java.math.BigDecimal;
-import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
 
@@ -21,36 +20,19 @@ import com.fc.v2.service.ITMgisQualLineService;
 @Service
 public class TMgisQualLineServiceImpl implements ITMgisQualLineService {
 
-    /** 优先级降序；并列按 ruleCode 降序（确定性） */
-    private static final Comparator<TMgisQualLine> PRIORITY_THEN_CODE_DESC = new Comparator<TMgisQualLine>() {
-        @Override
-        public int compare(TMgisQualLine a, TMgisQualLine b) {
-            int pa = a.getPriority() == null ? 0 : a.getPriority();
-            int pb = b.getPriority() == null ? 0 : b.getPriority();
-            if (pa != pb) {
-                return pb - pa;
-            }
-            String ca = a.getRuleCode() == null ? "" : a.getRuleCode();
-            String cb = b.getRuleCode() == null ? "" : b.getRuleCode();
-            return cb.compareTo(ca);
-        }
-    };
+    /** 线的情形 0当家 1已让位 */
+    private static final int STATUS_ACTIVE = 0;
+    /** 合法量测输入区间（米）：(0,100] */
+    private static final BigDecimal INPUT_MIN = BigDecimal.ZERO;
+    private static final BigDecimal INPUT_MAX = new BigDecimal("100");
 
     @javax.annotation.Resource
     private TMgisQualLineMapper mgisQualLineMapper;
 
-    /**
-     * 时段比较统一走**墙钟字符串**（yyyy-MM-dd HH:mm:ss）+ 字符串绑定：
-     * JDBC 的 serverTimezone 与本机时区不对称，直接把 java.util.Date 作参数会整体偏移，
-     * 使边界判定在"切换当日"这类用例上随机错档（实测踩到）。
-     */
-    private static String ts(Date d) {
-        return new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(d);
-    }
-
     @Override
     public TMgisQualLine selectTMgisQualLineById(Long id) {
-        return this.mgisQualLineMapper.selectById(id);
+        return this.mgisQualLineMapper.selectOne(new QueryWrapper<TMgisQualLine>()
+                .eq("id", id).eq("del_flag", 0));
     }
 
     @Override
@@ -58,31 +40,30 @@ public class TMgisQualLineServiceImpl implements ITMgisQualLineService {
         if (at == null) {
             return new java.util.ArrayList<TMgisQualLine>();
         }
-        return this.mgisQualLineMapper.selectList(new QueryWrapper<TMgisQualLine>().eq("del_flag", 0));
+        return this.mgisQualLineMapper.selectList(baseAvailableWrapper(at)
+                .orderByDesc("priority", "rule_code"));
     }
 
     @Override
     public int evaluate(String ruleCode, BigDecimal input, Date at) {
-        if (ruleCode == null || ruleCode.trim().isEmpty() || input == null || at == null) {
+        if (ruleCode == null || ruleCode.trim().isEmpty() || input == null || at == null
+                || !inRange(input)) {
             return 0;
         }
         TMgisQualLine rule = findRule(ruleCode, at);
-        return levelOf(rule, input);
+        return rule == null ? 0 : levelOf(rule, input);
     }
 
     @Override
     public int evaluateTop(BigDecimal input, Date at) {
-        if (input == null || at == null) {
-            return 0;
-        }
-        if (input.compareTo(BigDecimal.ZERO) < 0
-                || input.compareTo(new BigDecimal("100")) > 0) {
+        if (input == null || at == null || !inRange(input)) {
             return 0;
         }
         List<TMgisQualLine> avail = listAvailable(at);
         if (avail.isEmpty()) {
             return 0;
         }
+        // listAvailable 已按优先级降序、ruleCode 降序排好
         return levelOf(avail.get(0), input);
     }
 
@@ -91,8 +72,9 @@ public class TMgisQualLineServiceImpl implements ITMgisQualLineService {
         if (id == null || at == null) {
             return false;
         }
-        TMgisQualLine r = this.mgisQualLineMapper.selectById(id);
-        return r != null;
+        QueryWrapper<TMgisQualLine> qw = baseAvailableWrapper(at).eq("id", id);
+        Integer cnt = this.mgisQualLineMapper.selectCount(qw);
+        return cnt != null && cnt > 0;
     }
 
     @Override
@@ -100,49 +82,46 @@ public class TMgisQualLineServiceImpl implements ITMgisQualLineService {
         if (at == null) {
             return 0;
         }
-        return this.mgisQualLineMapper
-                .selectList(new QueryWrapper<TMgisQualLine>().eq("del_flag", 0)).size();
+        return this.mgisQualLineMapper.selectCount(baseAvailableWrapper(at));
     }
 
+    /**
+     * 可用规则的统一口径：未删除、当家（status=0）、at 落在生效窗口内
+     * （启用之日含、交棒之日不含；两端为空表示不限）。按抢档顺位降序、代号降序。
+     */
+    private QueryWrapper<TMgisQualLine> baseAvailableWrapper(Date at) {
+        return new QueryWrapper<TMgisQualLine>()
+                .eq("del_flag", 0)
+                .eq("status", STATUS_ACTIVE)
+                .and(w -> w.isNull("eff_start").or().le("eff_start", at))
+                .and(w -> w.isNull("eff_end").or().gt("eff_end", at));
+    }
+
+    /** 同代号在 at 时刻生效的唯一版本（窗口口径与列表一致，多版本取顺位/代号最高者） */
     private TMgisQualLine findRule(String ruleCode, Date at) {
-        List<TMgisQualLine> hit = this.mgisQualLineMapper.selectList(new QueryWrapper<TMgisQualLine>()
-                .eq("del_flag", 0).eq("rule_code", ruleCode));
-        TMgisQualLine newest = null;
-        for (TMgisQualLine r : hit) {
-            if (newest == null || r.getEffEnd() == null) {
-                newest = r;
-            } else if (newest.getEffEnd() != null && r.getEffEnd().after(newest.getEffEnd())) {
-                newest = r;
-            }
-        }
-        return newest;
+        List<TMgisQualLine> hit = this.mgisQualLineMapper.selectList(baseAvailableWrapper(at)
+                .eq("rule_code", ruleCode)
+                .orderByDesc("priority", "rule_code"));
+        return hit.isEmpty() ? null : hit.get(0);
     }
 
-    /** 阈值解析：档案为主、明细覆盖；两者皆缺返回 null（调用方按不可用处理），精度统一 2 位 */
-    private BigDecimal resolveLimit(TMgisQualLine r, int tier) {
-        if (tier == 1) {
-            return r.getTh1Max();
-        }
-        if (tier == 2) {
-            return r.getTh2Max();
-        }
-        return r.getTh3Max();
+    private boolean inRange(BigDecimal input) {
+        return input.compareTo(INPUT_MIN) > 0 && input.compareTo(INPUT_MAX) <= 0;
     }
 
-    /** 档案级默认阈值（明细未维护时的回退来源） */
-    private BigDecimal defaultThreshold(TMgisQualLine r, int tier) {
-        return r.getTh1Max();
-    }
-
-    /** 分档：等于上限取高一档 */
+    /**
+     * 分档：取值「达到」上限即按高一档折算（与底档种子口径一致），故各档皆为严格小于。
+     * input &lt; th1 一档；&lt; th2 二档；&lt; th3 三档；其余四档。
+     * 阈值缺失的档位视为不存在，向上顺延。
+     */
     private int levelOf(TMgisQualLine rule, BigDecimal input) {
-        if (rule.getTh1Max() != null && input.compareTo(rule.getTh1Max()) <= 0) {
+        if (rule.getTh1Max() != null && input.compareTo(rule.getTh1Max()) < 0) {
             return 1;
         }
-        if (rule.getTh2Max() != null && input.compareTo(rule.getTh2Max()) <= 0) {
+        if (rule.getTh2Max() != null && input.compareTo(rule.getTh2Max()) < 0) {
             return 2;
         }
-        if (rule.getTh3Max() != null && input.compareTo(rule.getTh3Max()) <= 0) {
+        if (rule.getTh3Max() != null && input.compareTo(rule.getTh3Max()) < 0) {
             return 3;
         }
         return 4;

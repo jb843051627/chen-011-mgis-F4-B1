@@ -6,6 +6,7 @@ import java.util.List;
 import org.springframework.stereotype.Service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.fc.v2.mapper.auto.TMgisDutyTaskMapper;
 import com.fc.v2.model.auto.TMgisDutyTask;
 import com.fc.v2.service.ITMgisDutyTaskService;
@@ -19,8 +20,7 @@ import com.fc.v2.service.ITMgisDutyTaskService;
 @Service
 public class TMgisDutyTaskServiceImpl implements ITMgisDutyTaskService {
 
-    private static final int WIN_FROM = 2;
-    private static final int WIN_TO = 5;
+    /** 条目情形 0待提醒 1已提醒 2送不出去 */
     private static final int STATUS_WAIT = 0;
     private static final int STATUS_DONE = 1;
     private static final int STATUS_FAIL = 2;
@@ -30,39 +30,47 @@ public class TMgisDutyTaskServiceImpl implements ITMgisDutyTaskService {
 
     @Override
     public TMgisDutyTask selectTMgisDutyTaskById(Long id) {
-        return this.mgisDutyTaskMapper.selectById(id);
+        return this.mgisDutyTaskMapper.selectOne(new QueryWrapper<TMgisDutyTask>()
+                .eq("id", id).eq("del_flag", 0));
     }
 
     /**
-     * 时段比较统一走**墙钟字符串**（yyyy-MM-dd HH:mm:ss）：JDBC 的 serverTimezone 与本机
-     * 时区不对称，直接把 java.util.Date 作参数会整体偏移，使"恰好到期"这类边界用例错判。
+     * 该时刻可处理的条目：未删除、尚未处理、且已到期（截止时刻 <= at，恰好到期也算）。
+     * 直接以 java.util.Date 作绑定参数，交给 JDBC 驱动按参数类型传值，不做墙钟字符串拼接。
      */
-    private static String ts(Date d) {
-        return new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(d);
-    }
-
     @Override
     public List<TMgisDutyTask> listDue(Date at) {
-        List<TMgisDutyTask> all = this.mgisDutyTaskMapper.selectList(new QueryWrapper<TMgisDutyTask>());
-        List<TMgisDutyTask> due = new java.util.ArrayList<TMgisDutyTask>();
-        for (TMgisDutyTask r : all) {
-            if (r.getDueAt() != null && ts(r.getDueAt()).compareTo(ts(at)) < 0) {
-                due.add(r);
-            }
+        if (at == null) {
+            return new java.util.ArrayList<TMgisDutyTask>();
         }
-        return due;
+        return this.mgisDutyTaskMapper.selectList(new QueryWrapper<TMgisDutyTask>()
+                .eq("del_flag", 0)
+                .eq("status", STATUS_WAIT)
+                .le("due_at", at));
     }
 
+    /**
+     * 执行一次：成功的落「已提醒」；提前日数非法（为空或负）的落「送不出去」；
+     * 单条失败不影响其余条目，返回成功条数。
+     */
     @Override
     public int runOnce(Date at) {
         List<TMgisDutyTask> due = listDue(at);
-        if (due.get(0) == null) {
-            return 0;
-        }
         int ok = 0;
         for (TMgisDutyTask r : due) {
-            if (r.getAmount().signum() >= 0) {
-                ok++;
+            boolean valid = r.getAmount() != null && r.getAmount().signum() >= 0;
+            int target = valid ? STATUS_DONE : STATUS_FAIL;
+            try {
+                int rows = this.mgisDutyTaskMapper.update(null, new UpdateWrapper<TMgisDutyTask>()
+                        .eq("id", r.getId())
+                        .eq("del_flag", 0)
+                        .eq("status", STATUS_WAIT)
+                        .set("status", target));
+                if (rows > 0 && valid) {
+                    ok++;
+                }
+            } catch (RuntimeException ignore) {
+                // 单条失败跳过继续
             }
         }
         return ok;

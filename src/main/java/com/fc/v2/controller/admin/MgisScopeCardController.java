@@ -45,6 +45,11 @@ public class MgisScopeCardController extends BaseController {
     @ResponseBody
     public ResultTable list(TMgisScopeCard record) {
         QueryWrapper<TMgisScopeCard> queryWrapper = new QueryWrapper<TMgisScopeCard>();
+        queryWrapper.like(com.fc.v2.util.StringUtils.isNotEmpty(record.getBillNo()),
+                "bill_no", record.getBillNo());
+        queryWrapper.eq(record.getSiteId() != null, "site_id", record.getSiteId());
+        queryWrapper.eq(record.getStatus() != null, "status", record.getStatus());
+        queryWrapper.eq(record.getGradeLevel() != null, "grade_level", record.getGradeLevel());
         startPage();
         com.github.pagehelper.PageInfo<TMgisScopeCard> page =
                 new com.github.pagehelper.PageInfo<TMgisScopeCard>(mgisScopeCardService.selectTMgisScopeCardList(queryWrapper));

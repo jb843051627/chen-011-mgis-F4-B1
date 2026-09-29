@@ -63,23 +63,40 @@ public class MybatisPlusConfig {
     @ConfigurationProperties("mybatis-plus.global-config")
     public GlobalConfig globalConfig() {
         return new GlobalConfig().setMetaObjectHandler(new MetaObjectHandler() {
-        	
+
+        	/** 当前登录操作人；无 Shiro 上下文（如定时任务）时记 Task/system，绝不取页面传入值 */
+        	private String currentOperator() {
+        	    try {
+        	        return ShiroUtils.getLoginName();
+        	    } catch (RuntimeException e) {
+        	        return "Task";
+        	    }
+        	}
+
+        	/** 强制写入：无论表单是否带同名字段，审计列一律取登录操作人与服务器时间 */
+        	private void forceFill(MetaObject metaObject, String field, Object value) {
+        	    if (metaObject.hasSetter(field)) {
+        	        metaObject.setValue(field, value);
+        	    }
+        	}
+
         	/**
-        	 * 自动填充
+        	 * 自动填充：createBy/createTime 一律以登录操作人与服务器时间为准，
+        	 * 即便表单带了同名字段也必须被覆盖，保证经办人真实可溯。
         	 */
             @Override
             public void insertFill(MetaObject metaObject) {
-                this.fillStrategy(metaObject, "createBy", ShiroUtils.getLoginName());
-                this.strictInsertFill(metaObject, "createTime", Date.class, new Date());
+                forceFill(metaObject, "createBy", currentOperator());
+                forceFill(metaObject, "createTime", new Date());
             }
-            
+
             /**
-             * 自动填充
+             * 自动填充：updateBy/updateTime 同理
              */
             @Override
             public void updateFill(MetaObject metaObject) {
-                this.fillStrategy(metaObject, "updateBy", ShiroUtils.getLoginName());
-                this.strictUpdateFill(metaObject, "updateTime", Date.class, new Date());
+                forceFill(metaObject, "updateBy", currentOperator());
+                forceFill(metaObject, "updateTime", new Date());
             }
         });
     }
