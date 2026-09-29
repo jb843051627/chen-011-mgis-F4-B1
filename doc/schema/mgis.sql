@@ -68,7 +68,9 @@ CREATE TABLE IF NOT EXISTS t_mgis_scope_card (
   update_by varchar(64) DEFAULT NULL COMMENT '更新者',
   update_time datetime DEFAULT NULL COMMENT '更新时间',
   remark varchar(500) DEFAULT NULL COMMENT '备注',
-  PRIMARY KEY (id)
+  PRIMARY KEY (id),
+  -- 卡号只在在册卡（del_flag=0）之间唯一；软删行落入 NULL，MySQL 允许多条 NULL，不挡同号复用
+  UNIQUE KEY uk_scope_card_bill_no_active ((CASE WHEN del_flag = 0 THEN bill_no END))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='作业范围标签建档卡';
 
 CREATE TABLE IF NOT EXISTS t_mgis_submit_row (

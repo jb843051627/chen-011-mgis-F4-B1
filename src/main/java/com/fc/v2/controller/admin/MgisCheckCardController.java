@@ -7,6 +7,7 @@ import com.fc.v2.common.domain.ResultTable;
 import com.fc.v2.common.log.Log;
 import com.fc.v2.model.auto.TMgisCheckCard;
 import com.fc.v2.service.ITMgisCheckCardService;
+import com.github.pagehelper.PageInfo;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import org.apache.shiro.authz.annotation.RequiresPermissions;
@@ -45,9 +46,22 @@ public class MgisCheckCardController extends BaseController {
     @ResponseBody
     public ResultTable list(TMgisCheckCard record) {
         QueryWrapper<TMgisCheckCard> queryWrapper = new QueryWrapper<TMgisCheckCard>();
+        // 存量读取统一口径：只看未删单据
+        queryWrapper.eq("del_flag", 0);
+        // 落定状态、当前关口（进度）两个筛口都要真正起作用
+        if (record.getStatus() != null) {
+            queryWrapper.eq("status", record.getStatus());
+        }
+        if (record.getStage() != null) {
+            queryWrapper.eq("stage", record.getStage());
+        }
+        if (record.getBizNo() != null && !record.getBizNo().trim().isEmpty()) {
+            queryWrapper.like("biz_no", record.getBizNo().trim());
+        }
+        queryWrapper.orderByDesc("create_time");
         startPage();
-        com.github.pagehelper.PageInfo<TMgisCheckCard> page =
-                new com.github.pagehelper.PageInfo<TMgisCheckCard>(mgisCheckCardService.selectTMgisCheckCardList(queryWrapper));
+        PageInfo<TMgisCheckCard> page =
+                new PageInfo<TMgisCheckCard>(mgisCheckCardService.selectTMgisCheckCardList(queryWrapper));
         return pageTable(page.getList(), page.getTotal());
     }
 
@@ -57,7 +71,11 @@ public class MgisCheckCardController extends BaseController {
     @RequiresPermissions("mgisCheckCard:advance")
     @ResponseBody
     public AjaxResult advance(Long id, String remark) {
-        return toAjax(mgisCheckCardService.advance(id, remark) != null ? 1 : 0);
+        TMgisCheckCard updated = mgisCheckCardService.advance(id, remark);
+        if (updated != null) {
+            return success();
+        }
+        return AjaxResult.error("推进被拒：单据不存在、已办结，或已被他人先行处理，请刷新后重试");
     }
 
     @Log(title = "不合格成果整改回执单回退", action = "rollback")
@@ -66,6 +84,10 @@ public class MgisCheckCardController extends BaseController {
     @RequiresPermissions("mgisCheckCard:rollback")
     @ResponseBody
     public AjaxResult rollback(Long id, String remark) {
-        return toAjax(mgisCheckCardService.rollback(id, remark) != null ? 1 : 0);
+        TMgisCheckCard updated = mgisCheckCardService.rollback(id, remark);
+        if (updated != null) {
+            return success();
+        }
+        return AjaxResult.error("回退被拒：单据不存在、已办结，或已被他人先行处理，请刷新后重试");
     }
 }

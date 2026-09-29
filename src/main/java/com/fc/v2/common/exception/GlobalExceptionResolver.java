@@ -110,6 +110,15 @@ public class GlobalExceptionResolver{
     }
     
     /**
+     * 业务校验异常：把明确的拦截原因交回页面
+     */
+    @ExceptionHandler(BusinessException.class)
+    public AjaxResult businessException(BusinessException e)
+    {
+        return AjaxResult.error(e.getMessage());
+    }
+
+    /**
      * 拦截未知的运行时异常
      */
     @ExceptionHandler(RuntimeException.class)

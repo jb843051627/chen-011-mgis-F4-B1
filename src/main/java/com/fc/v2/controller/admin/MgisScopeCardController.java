@@ -5,8 +5,12 @@ import com.fc.v2.common.base.BaseController;
 import com.fc.v2.common.domain.AjaxResult;
 import com.fc.v2.common.domain.ResultTable;
 import com.fc.v2.common.log.Log;
+import com.fc.v2.mapper.auto.TMgisUnitDocMapper;
 import com.fc.v2.model.auto.TMgisScopeCard;
+import com.fc.v2.model.auto.TMgisUnitDoc;
 import com.fc.v2.service.ITMgisScopeCardService;
+import com.fc.v2.util.StringUtils;
+import com.github.pagehelper.PageInfo;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import org.apache.shiro.authz.annotation.RequiresPermissions;
@@ -31,6 +35,24 @@ public class MgisScopeCardController extends BaseController {
     @Autowired
     private ITMgisScopeCardService mgisScopeCardService;
 
+    @Autowired
+    private TMgisUnitDocMapper mgisUnitDocMapper;
+
+    /**
+     * 建档页所属单位下拉：只给在册（未注销、未删除）的资质单位，
+     * 已注销档案在挑选这一关就挑不中，而不是等保存时才拦。
+     */
+    @ApiOperation(value = "在册资质单位下拉", notes = "在册资质单位下拉")
+    @GetMapping("/activeSites")
+    @RequiresPermissions("mgis:mgisScopeCard:view")
+    @ResponseBody
+    public AjaxResult activeSites() {
+        return AjaxResult.successData(200, mgisUnitDocMapper.selectList(new QueryWrapper<TMgisUnitDoc>()
+                .eq("del_flag", 0)
+                .eq("status", 0)
+                .orderByAsc("site_no")));
+    }
+
     @ApiOperation(value = "分页跳转", notes = "分页跳转")
     @GetMapping("/view")
     @RequiresPermissions("mgis:mgisScopeCard:view")
@@ -45,9 +67,24 @@ public class MgisScopeCardController extends BaseController {
     @ResponseBody
     public ResultTable list(TMgisScopeCard record) {
         QueryWrapper<TMgisScopeCard> queryWrapper = new QueryWrapper<TMgisScopeCard>();
+        // 存量读取统一口径：只看未删卡，进展（进度）按筛选走，不再写死 status=0
+        queryWrapper.eq("del_flag", 0);
+        if (StringUtils.isNotEmpty(record.getBillNo())) {
+            queryWrapper.like("bill_no", record.getBillNo());
+        }
+        if (record.getStatus() != null) {
+            queryWrapper.eq("status", record.getStatus());
+        }
+        if (record.getGradeLevel() != null) {
+            queryWrapper.eq("grade_level", record.getGradeLevel());
+        }
+        if (record.getSiteId() != null) {
+            queryWrapper.eq("site_id", record.getSiteId());
+        }
+        queryWrapper.orderByDesc("create_time");
         startPage();
-        com.github.pagehelper.PageInfo<TMgisScopeCard> page =
-                new com.github.pagehelper.PageInfo<TMgisScopeCard>(mgisScopeCardService.selectTMgisScopeCardList(queryWrapper));
+        PageInfo<TMgisScopeCard> page =
+                new PageInfo<TMgisScopeCard>(mgisScopeCardService.selectTMgisScopeCardList(queryWrapper));
         return pageTable(page.getList(), page.getTotal());
     }
 

@@ -21,6 +21,9 @@ import com.fc.v2.service.ITMgisQualLineService;
 @Service
 public class TMgisQualLineServiceImpl implements ITMgisQualLineService {
 
+    /** 线的情形：当家 */
+    private static final int LINE_ACTIVE = 0;
+
     /** 优先级降序；并列按 ruleCode 降序（确定性） */
     private static final Comparator<TMgisQualLine> PRIORITY_THEN_CODE_DESC = new Comparator<TMgisQualLine>() {
         @Override
@@ -58,7 +61,15 @@ public class TMgisQualLineServiceImpl implements ITMgisQualLineService {
         if (at == null) {
             return new java.util.ArrayList<TMgisQualLine>();
         }
-        return this.mgisQualLineMapper.selectList(new QueryWrapper<TMgisQualLine>().eq("del_flag", 0));
+        String now = ts(at);
+        // 存量读取一把尺：未删 + 当家 + 启用之日已到 + 交棒之日未到（交棒日不含）
+        List<TMgisQualLine> rows = this.mgisQualLineMapper.selectList(new QueryWrapper<TMgisQualLine>()
+                .eq("del_flag", 0)
+                .eq("status", LINE_ACTIVE)
+                .le("eff_start", now)
+                .and(w -> w.isNull("eff_end").or().gt("eff_end", now)));
+        rows.sort(PRIORITY_THEN_CODE_DESC);
+        return rows;
     }
 
     @Override
@@ -66,7 +77,14 @@ public class TMgisQualLineServiceImpl implements ITMgisQualLineService {
         if (ruleCode == null || ruleCode.trim().isEmpty() || input == null || at == null) {
             return 0;
         }
+        // 中误差不得为负
+        if (input.compareTo(BigDecimal.ZERO) < 0) {
+            return 0;
+        }
         TMgisQualLine rule = findRule(ruleCode, at);
+        if (rule == null) {
+            return 0;
+        }
         return levelOf(rule, input);
     }
 
@@ -83,6 +101,7 @@ public class TMgisQualLineServiceImpl implements ITMgisQualLineService {
         if (avail.isEmpty()) {
             return 0;
         }
+        // listAvailable 已按优先级降序、ruleCode 降序排好，队首即抢档赢家
         return levelOf(avail.get(0), input);
     }
 
@@ -92,57 +111,57 @@ public class TMgisQualLineServiceImpl implements ITMgisQualLineService {
             return false;
         }
         TMgisQualLine r = this.mgisQualLineMapper.selectById(id);
-        return r != null;
+        if (r == null) {
+            return false;
+        }
+        // 口径与 listAvailable / countAvailable 完全一致，不得只看主键在不在
+        return isEffective(r, at);
     }
 
     @Override
     public int countAvailable(Date at) {
-        if (at == null) {
-            return 0;
-        }
-        return this.mgisQualLineMapper
-                .selectList(new QueryWrapper<TMgisQualLine>().eq("del_flag", 0)).size();
+        return listAvailable(at).size();
     }
 
+    /** 定位 ruleCode 在 at 时刻唯一生效的版本 */
     private TMgisQualLine findRule(String ruleCode, Date at) {
+        String now = ts(at);
         List<TMgisQualLine> hit = this.mgisQualLineMapper.selectList(new QueryWrapper<TMgisQualLine>()
-                .eq("del_flag", 0).eq("rule_code", ruleCode));
-        TMgisQualLine newest = null;
-        for (TMgisQualLine r : hit) {
-            if (newest == null || r.getEffEnd() == null) {
-                newest = r;
-            } else if (newest.getEffEnd() != null && r.getEffEnd().after(newest.getEffEnd())) {
-                newest = r;
-            }
-        }
-        return newest;
+                .eq("del_flag", 0)
+                .eq("status", LINE_ACTIVE)
+                .eq("rule_code", ruleCode)
+                .le("eff_start", now)
+                .and(w -> w.isNull("eff_end").or().gt("eff_end", now)));
+        return hit.isEmpty() ? null : hit.get(0);
     }
 
-    /** 阈值解析：档案为主、明细覆盖；两者皆缺返回 null（调用方按不可用处理），精度统一 2 位 */
-    private BigDecimal resolveLimit(TMgisQualLine r, int tier) {
-        if (tier == 1) {
-            return r.getTh1Max();
+    /** 与列表同一套生效口径 */
+    private boolean isEffective(TMgisQualLine r, Date at) {
+        if (r.getDelFlag() != null && r.getDelFlag() != 0) {
+            return false;
         }
-        if (tier == 2) {
-            return r.getTh2Max();
+        if (r.getStatus() == null || r.getStatus() != LINE_ACTIVE) {
+            return false;
         }
-        return r.getTh3Max();
+        String now = ts(at);
+        if (r.getEffStart() == null || ts(r.getEffStart()).compareTo(now) > 0) {
+            return false;
+        }
+        return r.getEffEnd() == null || ts(r.getEffEnd()).compareTo(now) > 0;
     }
 
-    /** 档案级默认阈值（明细未维护时的回退来源） */
-    private BigDecimal defaultThreshold(TMgisQualLine r, int tier) {
-        return r.getTh1Max();
-    }
-
-    /** 分档：等于上限取高一档 */
+    /**
+     * 分档：取值正顶在上限上时按高一档折算（等于上限取高一档），
+     * 故各档比较一律严格小于，边界记录不再矮一档。
+     */
     private int levelOf(TMgisQualLine rule, BigDecimal input) {
-        if (rule.getTh1Max() != null && input.compareTo(rule.getTh1Max()) <= 0) {
+        if (rule.getTh1Max() != null && input.compareTo(rule.getTh1Max()) < 0) {
             return 1;
         }
-        if (rule.getTh2Max() != null && input.compareTo(rule.getTh2Max()) <= 0) {
+        if (rule.getTh2Max() != null && input.compareTo(rule.getTh2Max()) < 0) {
             return 2;
         }
-        if (rule.getTh3Max() != null && input.compareTo(rule.getTh3Max()) <= 0) {
+        if (rule.getTh3Max() != null && input.compareTo(rule.getTh3Max()) < 0) {
             return 3;
         }
         return 4;
